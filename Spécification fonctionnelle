@@ -1,0 +1,36 @@
+# Spécification fonctionnelle
+
+
+Le système fournit un mécanisme de communication inter-tâches gérant la concurrence en mémoire partagée .
+
+1. Tâches et concurrence (Task)
+
+Chaque tâche (Task) étend Thread et exécute son propre flux de contrôle de façon concurrente via un objet Runnable.
+
+Une tâche est associée à un gestionnaire de communication nommé Broker, accessible via la méthode statique Task.getBroker().
+
+2. Établissement de la connexion (Broker)
+
+Chaque Broker possède un nom unique (name) servant d'identifiant d'adressage pour les autres tâches.
+
+La communication nécessite la création d'un canal bidirectionnel (Channel) synchronisé entre deux tâches :
+
+Attente passive : la tâche réceptrice appelle accept(int port). Cet appel est bloquant jusqu'à ce qu'une demande de connexion sur ce port survienne. Il retourne alors un objet Channel.
+
+Demande active : la tâche émettrice appelle connect(String name, int port) en précisant le nom du broker distant et le port cible. Cet appel est bloquant jusqu'à ce que la connexion soit acceptée. Il retourne également l'objet Channel créé par la methode distante connect.
+
+Une fois le rendez-vous synchronisé, chaque tâche dispose de son extrémité du canal Channel.
+
+3. Échange de données (Channel)
+
+Le canal assure une communication bidirectionnelle synchrone sous la forme d'un flux d'octets (bytes) :
+
+write(byte[] bytes, int offset, int length) : écrit jusqu'à length octets à partir de bytes[offset]. L'appel bloque si le tampon d'émission/réception est saturé et retourne le nombre réel d'octets écrits.
+
+read(byte[] bytes, int offset, int length) : lit jusqu'à length octets et les stocke à partir de bytes[offset]. L'appel bloque si aucune donnée n'est disponible et retourne le nombre d'octets effectivement lus (ou une valeur sentinelle comme -1 en cas de fermeture du canal).
+
+4. Déconnexion et terminaison
+
+L'appel à disconnect() par une tâche clôture le canal des deux côtés, interrompt les opérations de lecture/écriture en attente et libère les ressources associées.
+
+La méthode disconnected() permet de vérifier à tout moment si le canal est fermé ou actif.
