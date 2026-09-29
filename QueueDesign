@@ -1,0 +1,29 @@
+Design
+Le modèle d'exécution : un event-loop par Task
+
+Contrairement à la spec 1 (canaux, blocage), celle-ci est entièrement asynchrone : post(Runnable), des listeners partout, jamais de read()/write() bloquants. Le point clé : "the task setting it will be used to execute the outcome notification" et "the listener will be invoked on the task that was used to set it" — chaque callback doit s'exécuter sur le thread d'une tâche précise, jamais sur un thread arbitraire (timer, thread de l'appelant, etc.).
+
+Je réutilise donc le même principe que dans l'implémentation des canaux : EventLoopTask extends Task extends Thread. Chaque tâche est un thread dédié qui tourne en boucle sur sa propre boîte aux lettres (BlockingQueue<Runnable>) :
+
+while (!dead) { Runnable r = mailbox.take(); try { r.run(); } catch(Throwable th) { fail(th); } }
+post(r) → dépose dans sa propre mailbox.
+post(r, delay) → un TimerService partagé (un seul ScheduledExecutorService pour tout le runtime) déclenche, après delay, un simple task.post(r) — le timer ne fait jamais exécuter r lui-même, il ne fait que réinjecter dans la mailbox de la bonne tâche au bon moment. Ça garantit qu'aucun code utilisateur ne tourne jamais ailleurs que sur le thread de sa propre tâche.
+Une exception non rattrapée dans un Runnable posté → fail(th) automatique (implicite, comme demandé par la spec).
+"La tâche qui appelle set()" pour écouter une autre tâche → je capture "qui appelle" exactement comme pour getBroker() dans la spec 1 : (EventLoopTask) Thread.currentThread().
+QueueBroker : pas de blocage, juste un registre de listeners
+
+Différence importante avec Rendezvous (spec 1) : ici bind() ne bloque jamais, il enregistre juste un BindListener pour un port (ConcurrentHashMap<Integer,BindListener>). connect(name, port, l) :
+
+cherche le broker distant via BrokerManager (identique à avant) → null trouvé ? renvoie false tout de suite (synchrone).
+sinon regarde si port est actuellement bindé chez le distant → si oui, crée une MessageQueuePair, poste bindListener.accepted(queueB) sur la tâche du broker distant et connectListener.connected(queueA) sur la tâche appelante ; si non → poste connectListener.refused().
+
+Hypothèse à vérifier avec l'énoncé complet : je considère que connect() teste l'état du bind au moment de l'appel (pas de file d'attente comme dans la spec 1 où connect bloquait jusqu'à un accept futur) — puisque tout est asynchrone ici et que rien dans le texte ne mentionne de réessai automatique, contrairement à connect() → null de la spec 1. Vaut le coup de confirmer ce point.
+
+MessageQueue : pas de buffer borné !
+
+Contrairement au canal (spec 1), il n'y a aucune notion de capacité/blocage ici — send() retourne un boolean immédiat, jamais un compte d'octets, et rien dans le texte ne parle de "plein". La livraison est donc poussée directement : send() poste un received(msg) sur la tâche qui a fait setListener(), sans buffer intermédiaire.
+
+Ce qui doit rester partagé entre les deux extrémités (comme ChannelPair avant), porté par MessageQueuePair :
+
+aClosed / bClosed
+un compteur inFlight par direction — nécessaire pour reproduire "l'extrémité qui se ferme (closing) redevient pleinement closed() une fois qu'elle a reçu tous les messages envoyés avant la fermeture" : on incrémente à l'envoi, décrémente juste avant de livrer, et on ne bascule closed()==true pour cette extrémité que quand inFlight==0 et le correspondant est fermé.
