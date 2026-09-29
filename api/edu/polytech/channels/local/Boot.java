@@ -16,7 +16,9 @@ public class Boot implements Bootstrap {
 
 	@Override
 	public Task newTask(Broker b, Runnable r, String name) {
-		return new CTask(b,r,name);
+		CTask t = new CTask(b, r, name);
+	    t.start();
+	    return t;
 	}
 
 }
